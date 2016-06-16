@@ -14,12 +14,16 @@
 
 #define BAUDRATE 	57600
 #define DEVICE 	"/dev/ttyUSB0"  
-#define SIZE 20
+#define MAXSIZE 30
 
 int ret;
 int serial_fd;
-char cmd_recieved = 0;
-char read_buf[SIZE];
+int direction;
+double velocity;
+char read_buf[50];
+char ring_buf[MAXSIZE];
+int read_addr = 0;
+int write_addr = 0;
 bool takeoff = false;
 
 std_msgs::Empty order;
@@ -27,15 +31,19 @@ geometry_msgs::Twist cmd;
 
 int set_serial(int fd, int nSpeed, int nBits, char nEvent, int nStop) ;
 void serial_init();
+int read();
+int next_data_handle(int addr);
+void write_data(char data);//put the data into the ringbuffer;
+void read_data();//read the data from ringbuffer to the cmd and velocity;
 
 int main(int argc, char **argv)
 {
 	ros::init(argc, argv, "serial_control");
 	ros::NodeHandle n;
-	ros::Publisher cmd_pub = n.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
+    ros::Publisher cmd_pub = n.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
 	ros::Publisher takeoff_pub = n.advertise<std_msgs::Empty>("/ardrone/takeoff", 1);
 	ros::Publisher land_pub = n.advertise<std_msgs::Empty>("/ardrone/land", 1);
-	ros::Rate loop_rate(10);
+	ros::Rate loop_rate(50);
 
 	serial_init();
 	while(ros::ok())
@@ -46,20 +54,21 @@ int main(int argc, char **argv)
 		cmd.angular.x = 0.0;
 		cmd.angular.y = 0.0;
 		cmd.angular.z = 0.0;
-		memset(read_buf,0,SIZE);
-		ret = read(serial_fd, read_buf, 1);
-		if(ret < 0)
+		ret = read();
+        if(ret <= 0)
+        {
+		    
+        }else
 		{
-			ROS_INFO("read error!"); 
-		}else if(ret == 0)
-		{
-			ROS_INFO("No data!");
-		}else
-		{
-			cmd_recieved = read_buf[0];
-			
-			switch(cmd_recieved){
-				case '0':
+			for (int i = 0; i < 6; i++)
+			{
+				write_data(read_buf[i]);//write the serialread data to ringbuffer
+			}
+			read_data();//read data from ringbuffer
+			ROS_INFO("direction:%d",direction);
+			ROS_INFO("velocity:%f",velocity);
+			switch(direction){
+				case 0:
 					cmd.linear.x = 0.0;
 					cmd.linear.y = 0.0;
 					cmd.linear.z = 0.0;
@@ -67,78 +76,85 @@ int main(int argc, char **argv)
 					cmd.angular.y = 0.0;
 					cmd.angular.z = 0.0;
 					break;
-				case '1':
-					cmd.linear.x = 0.1;
+				case 1:
+					cmd.linear.x = velocity;
+					cmd.linear.y = 0.0;
+					cmd.linear.z = 0.0;
+					cmd.angular.x = 0.0;
+					cmd.angular.y = 0.0;
+					cmd.angular.z = 0.0;
+                    ROS_INFO("linear x %lf",cmd.linear.x);
+					break;
+				case 2:
+					cmd.linear.x = -velocity;
 					cmd.linear.y = 0.0;
 					cmd.linear.z = 0.0;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
 					cmd.angular.z = 0.0;
 					break;
-				case '2':
-					cmd.linear.x = -0.1;
-					cmd.linear.y = 0.0;
+				case 3:
+					cmd.linear.x = 0.0;
+					cmd.linear.y = velocity*2;
 					cmd.linear.z = 0.0;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
 					cmd.angular.z = 0.0;
 					break;
-				case '3':
+				case 4:
 					cmd.linear.x = 0.0;
-					cmd.linear.y = 0.1;
+					cmd.linear.y = -velocity;
 					cmd.linear.z = 0.0;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
 					cmd.angular.z = 0.0;
 					break;
-				case '4':
-					cmd.linear.x = 0.0;
-					cmd.linear.y = -0.1;
-					cmd.linear.z = 0.0;
-					cmd.angular.x = 0.0;
-					cmd.angular.y = 0.0;
-					cmd.angular.z = 0.0;
-					break;
-				case '5':
+				case 5:
 					cmd.linear.x = 0.0;
 					cmd.linear.y = 0.0;
-					cmd.linear.z = 0.1;
+					cmd.linear.z = velocity;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
 					cmd.angular.z = 0.0;
 					break;
-				case '6':
+				case 6:
 					cmd.linear.x = 0.0;
 					cmd.linear.y = 0.0;
-					cmd.linear.z = -0.1;
+					cmd.linear.z = -velocity;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
 					cmd.angular.z = 0.0;
 					break;
-				case '7':
+				case 7:
 					cmd.linear.x = 0.0;
 					cmd.linear.y = 0.0;
 					cmd.linear.z = 0.0;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
-					cmd.angular.z = 0.1;
+					cmd.angular.z = velocity;
 					break;
-				case '8':
+				case 8:
 					cmd.linear.x = 0.0;
 					cmd.linear.y = 0.0;
 					cmd.linear.z = 0.0;
 					cmd.angular.x = 0.0;
 					cmd.angular.y = 0.0;
-					cmd.angular.z = -0.1;
+					cmd.angular.z = -velocity;
 					break;
-				case '9':
-					if(!takeoff){
-						takeoff_pub.publish(order);
-						takeoff = true;
-					}else{
-						land_pub.publish(order);
-						takeoff = false;
-					}
+				case 68://takeoff
+                    takeoff_pub.publish(order);
+					takeoff = true;
+					break;
+				case 60://land
+					cmd.linear.x = 0.0;
+					cmd.linear.y = 0.0;
+					cmd.linear.z = 0.0;
+					cmd.angular.x = 0.0;
+					cmd.angular.y = 0.0;
+					cmd.angular.z = 0.0;
+					cmd_pub.publish(cmd);
+                    land_pub.publish(order);
+					takeoff = false;
 					break;
 				default:
 					cmd.linear.x = 0.0;
@@ -150,9 +166,11 @@ int main(int argc, char **argv)
 					break;
 			}
 
-
+            if(direction!=68&&direction!=60)cmd_pub.publish(cmd);
 		}
-		cmd_pub.publish(cmd);
+        //ROS_INFO("-----linear x %lf",cmd.linear.x);
+        //ROS_INFO("PUBLSIH");
+
 
 		ros::spinOnce();
 		loop_rate.sleep();
@@ -270,5 +288,65 @@ void serial_init()
 	{
 		ROS_INFO("Set Serial Error!");  
 		exit(1);  
+	}
+}
+
+int next_data_handle(int addr) {
+	return (addr + 1) == MAXSIZE ? 0 : (addr + 1);
+}
+
+void write_data(char data)
+{
+	*(ring_buf+write_addr) = data;
+	write_addr = next_data_handle(write_addr);
+}
+
+void read_data()
+{
+	if (ring_buf[read_addr] == 'M')
+	{
+		direction = ring_buf[read_addr + 1]-48;
+        velocity = (ring_buf[read_addr + 4] - 48) / 300.0;
+		for (int i = 0; i < 6; i++) {
+			read_addr = next_data_handle(read_addr);
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 6; i++)
+		{
+			read_addr = next_data_handle(read_addr);
+			if (ring_buf[read_addr] == 'M')
+			{
+				break;
+			}
+		}
+	}
+}
+
+int read()
+{
+	int ret;
+
+	memset(read_buf, 0, 50);
+	ret = read(serial_fd, read_buf, 6);
+	if (ret < 0)
+	{
+		ROS_INFO("read error!");
+		return -1;
+	}
+	else if (ret == 0)
+	{
+		//ROS_INFO("No data!");
+		return 0;
+	}
+	else{
+        /*ROS_INFO("data:%c",read_buf[0]);
+		ROS_INFO("data:%c",read_buf[1]);
+		ROS_INFO("data:%c",read_buf[2]);
+		ROS_INFO("data:%c",read_buf[3]);
+		ROS_INFO("data:%c",read_buf[4]);
+        ROS_INFO("data:%c",read_buf[5]);
+        return ret;*/
 	}
 }

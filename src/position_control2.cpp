@@ -376,7 +376,7 @@ void numberCallback(const ardrone_control::ROINumber &msg)
 	number_stamp = ros::Time::now();
 }
 
-void calcCoords(const float dists[], float coord[]);
+void calcCoords(const float dists[], float coord[])
 {
 	for (int i = 0; i < 10; ++i)
 	{
